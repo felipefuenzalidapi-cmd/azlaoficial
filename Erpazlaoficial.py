@@ -15,12 +15,10 @@ def init_state():
         )
     if "df_ventas" not in st.session_state:
         st.session_state.df_ventas = pd.DataFrame(
-            columns=["Fecha","Producto","Cantidad","Comprador","Talla","PrecioVenta"]
+            columns=["Fecha","Producto","Cantidad","Comprador","Talla","PrecioVenta","Origen","Comision"]
         )
     if "df_gastos" not in st.session_state:
-        st.session_state.df_gastos = pd.DataFrame(
-            columns=["Fecha","Tipo","Monto","Nota","MesPresupuesto"]
-        )
+        st.session_state.df_gastos = pd.DataFrame(columns=["Fecha","Tipo","Monto","Nota"])
     if "df_clientes" not in st.session_state:
         st.session_state.df_clientes = pd.DataFrame(columns=["Nombre","Contacto","Notas"])
     if "df_proveedores" not in st.session_state:
@@ -29,6 +27,12 @@ def init_state():
         st.session_state.low_stock_threshold = 5
     if "monthly_budget" not in st.session_state:
         st.session_state.monthly_budget = 0.0
+    if "comision_shopify" not in st.session_state:
+        st.session_state.comision_shopify = 2.0
+    if "comision_pasarela" not in st.session_state:
+        st.session_state.comision_pasarela = 3.5
+    if "iva_pct" not in st.session_state:
+        st.session_state.iva_pct = 19.0  # IVA Chile por defecto
 
 init_state()
 
@@ -64,7 +68,7 @@ def add_product(nombre, codigo, categoria, stock, precio, costo, proveedor):
     }])
     st.session_state.df_inventario = pd.concat([df, new], ignore_index=True)
 
-def register_sale(fecha, producto, cantidad, comprador, talla, precio_venta):
+def register_sale(fecha, producto, cantidad, comprador, talla, precio_venta, origen="Shopify"):
     inv = st.session_state.df_inventario.copy()
     idx = inv.index[inv["Producto"] == producto]
     if len(idx) == 0:
@@ -81,6 +85,10 @@ def register_sale(fecha, producto, cantidad, comprador, talla, precio_venta):
     inv.at[i, "Stock"] = stock_actual - cantidad
     st.session_state.df_inventario = inv
 
+    # Calcular comisión según origen
+    comision_pct = (st.session_state.comision_shopify if origen == "Shopify" else st.session_state.comision_pasarela) / 100.0
+    comision = float(precio_venta) * comision_pct
+
     sales = st.session_state.df_ventas.copy()
     new_sale = pd.DataFrame([{
         "Fecha": to_date_str(fecha),
@@ -88,19 +96,20 @@ def register_sale(fecha, producto, cantidad, comprador, talla, precio_venta):
         "Cantidad": int(cantidad),
         "Comprador": (comprador or "").strip(),
         "Talla": str(talla).strip(),
-        "PrecioVenta": float(precio_venta)
+        "PrecioVenta": float(precio_venta),
+        "Origen": origen,
+        "Comision": comision
     }])
     st.session_state.df_ventas = pd.concat([sales, new_sale], ignore_index=True)
     return True
 
-def add_expense(fecha, tipo, monto, nota, mes_presupuesto=""):
+def add_expense(fecha, tipo, monto, nota):
     exp = st.session_state.df_gastos.copy()
     new = pd.DataFrame([{
         "Fecha": to_date_str(fecha),
         "Tipo": tipo,
         "Monto": float(monto),
-        "Nota": (nota or "").strip(),
-        "MesPresupuesto": (mes_presupuesto or "").strip()
+        "Nota": (nota or "").strip()
     }])
     st.session_state.df_gastos = pd.concat([exp, new], ignore_index=True)
 
@@ -114,15 +123,14 @@ def add_supplier(nombre, contacto, notas=""):
     new = pd.DataFrame([{"Nombre": nombre.strip(), "Contacto": (contacto or "").strip(), "Notas": (notas or "").strip()}])
     st.session_state.df_proveedores = pd.concat([sup, new], ignore_index=True)
 
-# ---------------- Barra lateral: configuración y exportación ----------------
+# ---------------- Barra lateral ----------------
 with st.sidebar:
     st.header("Configuración")
-    st.session_state.low_stock_threshold = st.number_input(
-        "Umbral de stock bajo", min_value=0, value=st.session_state.low_stock_threshold, step=1, key="cfg_stock_umbral"
-    )
-    st.session_state.monthly_budget = st.number_input(
-        "Presupuesto mensual de gastos", min_value=0.0, value=float(st.session_state.monthly_budget), step=500.0, key="cfg_presupuesto"
-    )
+    st.session_state.low_stock_threshold = st.number_input("Umbral de stock bajo", min_value=0, value=st.session_state.low_stock_threshold, step=1, key="cfg_stock_umbral")
+    st.session_state.monthly_budget = st.number_input("Presupuesto mensual de gastos", min_value=0.0, value=float(st.session_state.monthly_budget), step=500.0, key="cfg_presupuesto")
+    st.session_state.comision_shopify = st.number_input("Comisión Shopify (%)", min_value=0.0, value=st.session_state.comision_shopify, step=0.1, key="cfg_shopify")
+    st.session_state.comision_pasarela = st.number_input("Comisión Pasarela (%)", min_value=0.0, value=st.session_state.comision_pasarela, step=0.1, key="cfg_pasarela")
+    st.session_state.iva_pct = st.number_input("IVA (%)", min_value=0.0, value=st.session_state.iva_pct, step=0.5, key="cfg_iva")
 
     st.divider()
     st.subheader("Exportar todo")
@@ -190,6 +198,7 @@ with tab_sales:
     else:
         fecha_v = st.date_input("Fecha", datetime.today(), key="ventas_fecha")
         comprador = st.text_input("Nombre del comprador", key="ventas_comprador")
+        origen = st.selectbox("Origen de la venta", ["Shopify","Pasarela"], key="ventas_origen")
         num_items = st.number_input("Número de productos en esta venta", min_value=1, value=1, step=1, key="ventas_num_items")
 
         items = []
@@ -209,7 +218,7 @@ with tab_sales:
         if st.button("Registrar venta múltiple", type="secondary", key="ventas_registrar"):
             any_ok = False
             for item in items:
-                ok = register_sale(fecha_v, item["Producto"], item["Cantidad"], comprador, item["Talla"], item["PrecioVenta"])
+                ok = register_sale(fecha_v, item["Producto"], item["Cantidad"], comprador, item["Talla"], item["PrecioVenta"], origen=origen)
                 any_ok = any_ok or ok
             if any_ok:
                 st.success("Venta registrada.")
@@ -246,9 +255,8 @@ with tab_exp:
         monto = st.number_input("Monto", min_value=0.0, value=0.0, step=100.0, key="gastos_monto")
     with c4:
         nota = st.text_input("Nota (opcional)", key="gastos_nota")
-    mes_pres = st.text_input("Mes presupuestado (YYYY-MM, opcional)", key="gastos_mes_presupuesto")
     if st.button("Agregar gasto", key="gastos_add"):
-        add_expense(fecha_g, tipo, monto, nota, mes_pres)
+        add_expense(fecha_g, tipo, monto, nota)
         st.success("Gasto registrado.")
 
     st.divider()
@@ -299,6 +307,21 @@ with tab_crm:
     st.divider()
     st.subheader("Clientes")
     st.dataframe(st.session_state.df_clientes, use_container_width=True)
+
+    st.subheader("Ranking de clientes")
+    if not st.session_state.df_ventas.empty:
+        ventas_cli = st.session_state.df_ventas.groupby("Comprador").agg(
+            CantidadCompras=("Producto","count"),
+            MontoTotal=("PrecioVenta","sum")
+        ).reset_index()
+
+        orden = st.radio("Ordenar por:", ["Cantidad de compras","Monto total"], key="crm_orden")
+        if orden == "Cantidad de compras":
+            ventas_cli = ventas_cli.sort_values("CantidadCompras", ascending=False)
+        else:
+            ventas_cli = ventas_cli.sort_values("MontoTotal", ascending=False)
+
+        st.dataframe(ventas_cli, use_container_width=True)
 
     st.subheader("Compras por cliente")
     if not st.session_state.df_ventas.empty:
@@ -385,12 +408,14 @@ with tab_reports:
 
 # ---------------- Estado de resultados ----------------
 with tab_results:
-    st.subheader("Estado de resultados")
+    st.subheader("Estado de resultados (neto sin IVA)")
     e1, e2 = st.columns([1,1])
     with e1:
         er_ini = st.date_input("Desde", value=datetime.today().replace(day=1), key="er_desde")
     with e2:
         er_fin = st.date_input("Hasta", value=datetime.today(), key="er_hasta")
+
+    IVA = st.session_state.iva_pct / 100.0
 
     sales = st.session_state.df_ventas.copy()
     exp = st.session_state.df_gastos.copy()
@@ -409,26 +434,36 @@ with tab_results:
     else:
         exp_f = exp
 
-    ingresos = float(sales_f["PrecioVenta"].sum())
-    gastos_totales = float(exp_f["Monto"].sum())
+    # Ingresos netos (sin IVA)
+    ingresos_netos = float((sales_f["PrecioVenta"] / (1 + IVA)).sum())
 
-    # Margen bruto: sum((PrecioVenta - CostoDirecto) * Cantidad)
+    # Costos directos: costo unitario por producto * cantidad
     if not sales_f.empty and not inv.empty and "CostoDirecto" in inv.columns:
         inv_cost = inv.set_index("Producto")["CostoDirecto"].to_dict()
         sales_f = sales_f.copy()
         sales_f["CostoUnit"] = sales_f["Producto"].map(inv_cost).fillna(0.0)
-        margen_bruto_val = float(((sales_f["PrecioVenta"] - sales_f["CostoUnit"]) * sales_f["Cantidad"]).sum())
+        costos_directos = float((sales_f["CostoUnit"] * sales_f["Cantidad"]).sum())
     else:
-        margen_bruto_val = 0.0
+        costos_directos = 0.0
 
-    resultado_neto = ingresos - gastos_totales
-    margen_neto_pct = (resultado_neto / ingresos * 100) if ingresos > 0 else 0.0
+    # Comisiones (Shopify/pasarela)
+    comisiones = float(sales_f["Comision"].sum()) if "Comision" in sales_f.columns else 0.0
 
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Ingresos", f"${ingresos:,.0f}")
-    k2.metric("Gastos", f"${gastos_totales:,.0f}")
-    k3.metric("Margen bruto", f"${margen_bruto_val:,.0f}")
-    k4.metric("Margen neto %", f"{margen_neto_pct:.2f}%")
+    # Gastos (otros)
+    gastos_totales = float(exp_f["Monto"].sum())
+
+    # Ganancia neta y margen
+    ganancia_neta = ingresos_netos - costos_directos - comisiones - gastos_totales
+    margen_utilidad = (ganancia_neta / ingresos_netos * 100) if ingresos_netos > 0 else 0.0
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Ingresos netos (sin IVA)", f"${ingresos_netos:,.0f}")
+    c2.metric("Costos directos", f"${costos_directos:,.0f}")
+    c3.metric("Comisiones", f"${comisiones:,.0f}")
+    c4.metric("Gastos", f"${gastos_totales:,.0f}")
+    c5.metric("Ganancia neta", f"${ganancia_neta:,.0f}")
+
+    st.metric("Margen de utilidad %", f"{margen_utilidad:.2f}%")
 
     st.divider()
     st.markdown("#### Detalle de ventas (periodo)")
