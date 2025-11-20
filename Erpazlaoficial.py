@@ -3,104 +3,29 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 from datetime import datetime, date
-import gspread
-from google.oauth2.service_account import Credentials
 
-# =========================
-# Configuración general
-# =========================
 st.set_page_config(page_title="ERP Zapatillas", page_icon="👟", layout="wide")
 st.title("👟 ERP para marca de zapatillas")
 
-# =========================
-# Conexión Google Sheets
-# =========================
-SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1-1-7J_xHkmJQ7fjQLdHjEXatzJKHbg9btUqczwz1q3c/edit"
+# ---------------- Configuración de tallas ----------------
+SIZES = [35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45]
 
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
-]
-
-def get_gs_client():
-    sa = st.secrets["google_service_account"]
-    creds = Credentials.from_service_account_info(sa, scopes=SCOPES)
-    return gspread.authorize(creds)
-
-@st.cache_resource
-def get_sheet():
-    client = get_gs_client()
-    return client.open_by_url(SPREADSHEET_URL)
-
-def ensure_worksheet(sh, title, rows=1000, cols=50):
-    try:
-        return sh.worksheet(title)
-    except gspread.exceptions.WorksheetNotFound:
-        return sh.add_worksheet(title=title, rows=rows, cols=cols)
-
-def df_read(sh, title):
-    ws = ensure_worksheet(sh, title)
-    rows = ws.get_all_values()
-    if not rows:
-        return pd.DataFrame()
-    if len(rows) == 1:
-        return pd.DataFrame(columns=rows[0])
-    return pd.DataFrame(rows[1:], columns=rows[0])
-
-def df_write(sh, title, df: pd.DataFrame):
-    ws = ensure_worksheet(sh, title)
-    if df is None:
-        ws.update([[]])
-        return
-    if df.empty:
-        ws.update([list(df.columns)])
-        return
-    data = [list(df.columns)] + df.astype(str).values.tolist()
-    ws.update(data)
-
-# =========================
-# Configuración de tallas
-# =========================
-SIZES = [35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
-
-# =========================
-# Estado inicial desde Sheets
-# =========================
+# ---------------- Estado inicial ----------------
 def init_state():
-    sh = get_sheet()
-    # Inventario
     if "df_inventario" not in st.session_state:
-        df_inv = df_read(sh, "Inventario")
-        if df_inv.empty:
-            base_cols = ["Producto", "Código", "Categoría", "Proveedor", "Precio", "CostoDirecto"]
-            size_cols = [f"Talla_{s}" for s in SIZES]
-            df_inv = pd.DataFrame(columns=base_cols + size_cols + ["StockTotal"])
-        st.session_state.df_inventario = df_inv
-    # Ventas
+        base_cols = ["Producto","Código","Categoría","Proveedor","Precio","CostoDirecto"]
+        size_cols = [f"Talla_{s}" for s in SIZES]
+        st.session_state.df_inventario = pd.DataFrame(columns=base_cols + size_cols + ["StockTotal"])
     if "df_ventas" not in st.session_state:
-        df_v = df_read(sh, "Ventas")
-        if df_v.empty:
-            df_v = pd.DataFrame(columns=["Fecha", "Producto", "Talla", "Cantidad", "Comprador", "PrecioVenta", "Comision"])
-        st.session_state.df_ventas = df_v
-    # Gastos
+        st.session_state.df_ventas = pd.DataFrame(columns=[
+            "Fecha","Producto","Talla","Cantidad","Comprador","PrecioVenta","Comision"
+        ])
     if "df_gastos" not in st.session_state:
-        df_g = df_read(sh, "Gastos")
-        if df_g.empty:
-            df_g = pd.DataFrame(columns=["Fecha", "Tipo", "Monto", "Nota"])
-        st.session_state.df_gastos = df_g
-    # Clientes
+        st.session_state.df_gastos = pd.DataFrame(columns=["Fecha","Tipo","Monto","Nota"])
     if "df_clientes" not in st.session_state:
-        df_c = df_read(sh, "Clientes")
-        if df_c.empty:
-            df_c = pd.DataFrame(columns=["Nombre", "Contacto", "Notas"])
-        st.session_state.df_clientes = df_c
-    # Proveedores
+        st.session_state.df_clientes = pd.DataFrame(columns=["Nombre","Contacto","Notas"])
     if "df_proveedores" not in st.session_state:
-        df_p = df_read(sh, "Proveedores")
-        if df_p.empty:
-            df_p = pd.DataFrame(columns=["Nombre", "Contacto", "Notas"])
-        st.session_state.df_proveedores = df_p
-    # Config
+        st.session_state.df_proveedores = pd.DataFrame(columns=["Nombre","Contacto","Notas"])
     if "low_stock_threshold" not in st.session_state:
         st.session_state.low_stock_threshold = 5
     if "monthly_budget" not in st.session_state:
@@ -114,9 +39,7 @@ def init_state():
 
 init_state()
 
-# =========================
-# Utilidades
-# =========================
+# ---------------- Utilidades ----------------
 DATE_FMT = "%Y-%m-%d"
 
 def to_date_str(d):
@@ -137,9 +60,7 @@ def most_common(series):
 def compute_stock_total(row):
     return int(sum(row.get(f"Talla_{s}", 0) or 0 for s in SIZES))
 
-# =========================
-# Funciones de negocio (persistiendo en Sheets)
-# =========================
+# ---------------- Funciones de negocio ----------------
 def add_product(nombre, codigo, categoria, proveedor, precio, costo, stocks_por_talla):
     df = st.session_state.df_inventario.copy()
     record = {
@@ -154,7 +75,6 @@ def add_product(nombre, codigo, categoria, proveedor, precio, costo, stocks_por_
         record[f"Talla_{s}"] = int(stocks_por_talla.get(s, 0))
     record["StockTotal"] = sum(stocks_por_talla.values())
     st.session_state.df_inventario = pd.concat([df, pd.DataFrame([record])], ignore_index=True)
-    df_write(get_sheet(), "Inventario", st.session_state.df_inventario)
 
 def register_sale(fecha, producto, talla, cantidad, comprador, precio_venta):
     inv = st.session_state.df_inventario.copy()
@@ -175,7 +95,7 @@ def register_sale(fecha, producto, talla, cantidad, comprador, precio_venta):
         st.warning(f"Stock insuficiente para talla {talla}. Disponible {stock_talla}, solicitado {cantidad}.")
         return False
 
-    # Descontar stock
+    # Descontar stock de esa talla y actualizar total
     inv.at[i, talla_col] = stock_talla - cantidad
     inv.at[i, "StockTotal"] = compute_stock_total(inv.loc[i])
     st.session_state.df_inventario = inv
@@ -195,11 +115,6 @@ def register_sale(fecha, producto, talla, cantidad, comprador, precio_venta):
         "Comision": comision
     }])
     st.session_state.df_ventas = pd.concat([sales, new_sale], ignore_index=True)
-
-    # Persistir cambios
-    sh = get_sheet()
-    df_write(sh, "Inventario", st.session_state.df_inventario)
-    df_write(sh, "Ventas", st.session_state.df_ventas)
     return True
 
 def add_expense(fecha, tipo, monto, nota):
@@ -211,23 +126,18 @@ def add_expense(fecha, tipo, monto, nota):
         "Nota": (nota or "").strip()
     }])
     st.session_state.df_gastos = pd.concat([exp, new], ignore_index=True)
-    df_write(get_sheet(), "Gastos", st.session_state.df_gastos)
 
 def add_client(nombre, contacto, notas=""):
     cli = st.session_state.df_clientes.copy()
     new = pd.DataFrame([{"Nombre": nombre.strip(), "Contacto": (contacto or "").strip(), "Notas": (notas or "").strip()}])
     st.session_state.df_clientes = pd.concat([cli, new], ignore_index=True)
-    df_write(get_sheet(), "Clientes", st.session_state.df_clientes)
 
 def add_supplier(nombre, contacto, notas=""):
     sup = st.session_state.df_proveedores.copy()
     new = pd.DataFrame([{"Nombre": nombre.strip(), "Contacto": (contacto or "").strip(), "Notas": (notas or "").strip()}])
     st.session_state.df_proveedores = pd.concat([sup, new], ignore_index=True)
-    df_write(get_sheet(), "Proveedores", st.session_state.df_proveedores)
 
-# =========================
-# Barra lateral
-# =========================
+# ---------------- Barra lateral ----------------
 with st.sidebar:
     st.header("Configuración")
     st.session_state.low_stock_threshold = st.number_input("Umbral de stock bajo", min_value=0, value=st.session_state.low_stock_threshold, step=1, key="cfg_stock_umbral")
@@ -238,12 +148,10 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Exportar todo")
-
     def compute_cash_flow_df():
         IVA = st.session_state.iva_pct / 100.0
         sales = st.session_state.df_ventas.copy()
         exp = st.session_state.df_gastos.copy()
-
         if not sales.empty:
             sales["Fecha"] = pd.to_datetime(sales["Fecha"])
             sales["Mes"] = sales["Fecha"].dt.to_period("M").astype(str)
@@ -252,7 +160,6 @@ with st.sidebar:
         else:
             ingresos_netos = pd.Series(dtype=float, name="IngresosNetos")
             comisiones = pd.Series(dtype=float, name="Comisiones")
-
         if not exp.empty:
             exp["Fecha"] = pd.to_datetime(exp["Fecha"])
             exp["Mes"] = exp["Fecha"].dt.to_period("M").astype(str)
@@ -277,16 +184,12 @@ with st.sidebar:
     })
     st.download_button("Descargar Excel (completo)", data=bytes_all, file_name="erp_zapatillas.xlsx", key="export_excel_all")
 
-# =========================
-# Tabs principales
-# =========================
+# ---------------- Tabs principales ----------------
 tab_inv, tab_sales, tab_exp, tab_crm, tab_sup, tab_reports, tab_cf, tab_results = st.tabs(
     ["🗃️ Inventario", "🧾 Ventas", "💸 Gastos", "👥 Clientes", "🏭 Proveedores", "📊 Reportes", "💵 Flujo de caja", "📈 Estado de resultados"]
 )
 
-# =========================
-# Inventario
-# =========================
+# ---------------- Inventario ----------------
 with tab_inv:
     st.subheader("Agregar producto con tallas")
     c1, c2, c3 = st.columns([2,2,2])
@@ -324,7 +227,7 @@ with tab_inv:
             for col in ["Producto","Código","Categoría","Proveedor"]
         ]).any(axis=1)
         inv_view = inv_view[mask]
-    st.dataframe(inv_view, width="stretch")
+    st.dataframe(inv_view, use_container_width=True)
 
     # Alertas de stock bajo (por total)
     low_df = st.session_state.df_inventario[st.session_state.df_inventario["StockTotal"] <= st.session_state.low_stock_threshold]
@@ -332,11 +235,9 @@ with tab_inv:
         st.markdown("✅ No hay modelos con stock total bajo.")
     else:
         st.warning(f"⚠️ Stock total bajo (≤ {st.session_state.low_stock_threshold})")
-        st.dataframe(low_df, width="stretch")
+        st.dataframe(low_df, use_container_width=True)
 
-# =========================
-# Ventas
-# =========================
+# ---------------- Ventas ----------------
 with tab_sales:
     st.subheader("Registrar venta por talla")
     if st.session_state.df_inventario.empty:
@@ -371,11 +272,9 @@ with tab_sales:
         if search_v:
             mask_v = v_view.apply(lambda r: search_v.lower() in str(r.values).lower(), axis=1)
             v_view = v_view[mask_v]
-    st.dataframe(v_view, width="stretch")
+    st.dataframe(v_view, use_container_width=True)
 
-# =========================
-# Gastos
-# =========================
+# ---------------- Gastos ----------------
 with tab_exp:
     st.subheader("Registrar gasto")
     c1, c2, c3, c4 = st.columns([1,1,1,2])
@@ -407,7 +306,7 @@ with tab_exp:
         if search_g:
             mask_g = g_view.apply(lambda r: search_g.lower() in str(r.values).lower(), axis=1)
             g_view = g_view[mask_g]
-    st.dataframe(g_view, width="stretch")
+    st.dataframe(g_view, use_container_width=True)
 
     # Alerta de presupuesto mensual
     if st.session_state.monthly_budget > 0:
@@ -420,9 +319,7 @@ with tab_exp:
         else:
             st.info(f"Gastos del mes {month_str}: ${monthly_sum:,.0f} de ${st.session_state.monthly_budget:,.0f}")
 
-# =========================
-# Clientes (CRM)
-# =========================
+# ---------------- Clientes (CRM) ----------------
 with tab_crm:
     st.subheader("Registrar cliente")
     c1, c2 = st.columns([2,2])
@@ -440,7 +337,7 @@ with tab_crm:
 
     st.divider()
     st.subheader("Clientes")
-    st.dataframe(st.session_state.df_clientes, width="stretch")
+    st.dataframe(st.session_state.df_clientes, use_container_width=True)
 
     st.subheader("Ranking de clientes")
     if not st.session_state.df_ventas.empty:
@@ -455,7 +352,7 @@ with tab_crm:
         else:
             ventas_cli = ventas_cli.sort_values("MontoTotal", ascending=False)
 
-        st.dataframe(ventas_cli, width="stretch")
+        st.dataframe(ventas_cli, use_container_width=True)
 
     st.subheader("Compras por cliente")
     if not st.session_state.df_ventas.empty:
@@ -466,11 +363,9 @@ with tab_crm:
         cli_sales = st.session_state.df_ventas[st.session_state.df_ventas["Comprador"] == cliente_sel]
         total_cli = cli_sales["PrecioVenta"].sum()
         st.metric("Total comprado (bruto)", f"${total_cli:,.0f}")
-        st.dataframe(cli_sales, width="stretch")
+        st.dataframe(cli_sales, use_container_width=True)
 
-# =========================
-# Proveedores
-# =========================
+# ---------------- Proveedores ----------------
 with tab_sup:
     st.subheader("Registrar proveedor")
     s1, s2 = st.columns([2,2])
@@ -488,11 +383,9 @@ with tab_sup:
 
     st.divider()
     st.subheader("Proveedores")
-    st.dataframe(st.session_state.df_proveedores, width="stretch")
+    st.dataframe(st.session_state.df_proveedores, use_container_width=True)
 
-# =========================
-# Reportes
-# =========================
+# ---------------- Reportes ----------------
 with tab_reports:
     st.subheader("Reportes")
     r1, r2 = st.columns([1,1])
@@ -509,14 +402,14 @@ with tab_reports:
         st.markdown("#### Ventas por modelo (brutas)")
         by_prod = sales_f.groupby("Producto")["PrecioVenta"].sum().sort_values(ascending=False)
         if not by_prod.empty:
-            st.bar_chart(by_prod, width="stretch")
+            st.bar_chart(by_prod, use_container_width=True)
         else:
             st.info("Sin ventas en el periodo seleccionado.")
 
         st.markdown("#### Ventas por talla (pares)")
         by_size = sales_f.groupby("Talla")["Cantidad"].sum().sort_values(ascending=False)
         if not by_size.empty:
-            st.bar_chart(by_size, width="stretch")
+            st.bar_chart(by_size, use_container_width=True)
         else:
             st.info("Sin cantidades por talla en el periodo.")
 
@@ -524,7 +417,7 @@ with tab_reports:
         sales_f["Mes"] = sales_f["Fecha"].dt.to_period("M").astype(str)
         by_month = sales_f.groupby("Mes")["PrecioVenta"].sum().sort_values()
         if not by_month.empty:
-            st.line_chart(by_month, width="stretch")
+            st.line_chart(by_month, use_container_width=True)
         else:
             st.info("Sin ventas para graficar por mes.")
 
@@ -545,15 +438,13 @@ with tab_reports:
         exp_f = exp[(exp["Fecha"] >= pd.to_datetime(r_ini)) & (exp["Fecha"] <= pd.to_datetime(r_fin))]
         by_cat = exp_f.groupby("Tipo")["Monto"].sum().sort_values(ascending=False)
         if not by_cat.empty:
-            st.bar_chart(by_cat, width="stretch")
+            st.bar_chart(by_cat, use_container_width=True)
         else:
             st.info("Sin gastos en el periodo.")
     else:
         st.info("Aún no hay gastos registrados.")
 
-# =========================
-# Flujo de caja
-# =========================
+# ---------------- Flujo de caja ----------------
 with tab_cf:
     st.subheader("Flujo de caja")
     c1, c2 = st.columns([1,1])
@@ -590,13 +481,11 @@ with tab_cf:
     flujo_m["SaldoNeto"] = flujo_m["Entradas"] - flujo_m["Salidas"]
     flujo_m["SaldoAcumulado"] = st.session_state.saldo_inicial + flujo_m["SaldoNeto"].cumsum()
 
-    st.dataframe(flujo_m.reset_index().rename(columns={"index": "Mes"}), width="stretch")
+    st.dataframe(flujo_m.reset_index().rename(columns={"index": "Mes"}), use_container_width=True)
     if not flujo_m.empty:
-        st.line_chart(flujo_m[["SaldoAcumulado"]], width="stretch")
+        st.line_chart(flujo_m[["SaldoAcumulado"]])
 
-# =========================
-# Estado de resultados
-# =========================
+# ---------------- Estado de resultados ----------------
 with tab_results:
     st.subheader("Estado de resultados (neto sin IVA)")
     e1, e2 = st.columns([1,1])
@@ -638,7 +527,7 @@ with tab_results:
     # Comisiones (solo pasarela)
     comisiones = float(sales_f["Comision"].sum()) if "Comision" in sales_f.columns else 0.0
 
-    # Gastos
+    # Gastos (incluye Shopify mensual si lo registras allí)
     gastos_totales = float(exp_f["Monto"].sum())
 
     # Ganancia neta y margen
@@ -655,21 +544,11 @@ with tab_results:
 
     st.divider()
     st.markdown("#### Detalle de ventas (periodo)")
-    st.dataframe(sales_f, width="stretch")
+    st.dataframe(sales_f, use_container_width=True)
     st.markdown("#### Detalle de gastos (periodo)")
-    st.dataframe(exp_f, width="stretch")
+    st.dataframe(exp_f, use_container_width=True)
 
-    # Persistir EstadoResultados calculado (opcional)
-    df_estado = pd.DataFrame([{
-        "Ingresos": ingresos_netos,
-        "Gastos": gastos_totales,
-        "Utilidad Neta": ganancia_neta
-    }])
-    df_write(get_sheet(), "EstadoResultados", df_estado)
-
-# =========================
-# Exportación al final
-# =========================
+# ---------------- Exportación al final ----------------
 st.divider()
 st.subheader("Exportar datos")
 bytes_all_final = download_excel({
