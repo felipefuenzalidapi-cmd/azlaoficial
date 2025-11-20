@@ -559,3 +559,39 @@ bytes_all_final = download_excel({
     "Proveedores": st.session_state.df_proveedores
 })
 st.download_button("Descargar Excel (todos)", data=bytes_all_final, file_name="erp_zapatillas_todo.xlsx", key="export_excel_all_bottom")
+import streamlit as st
+import pandas as pd
+from streamlit_gsheets import GSheetsConnection
+
+st.title("ERP Zapatillas - Conexión Google Sheets")
+
+# 1) Conexión usando los secrets configurados en Streamlit Cloud
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# 2) URL de tu Google Sheet (usa el enlace base hasta /edit)
+SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1-1-7J_xHkmJQ7fjQLdHjEXatzJKHbg9btUqczwz1q3c/edit"
+
+# 3) Funciones auxiliares para leer y escribir
+def gs_read(sheet_name):
+    return conn.read(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name)
+
+def gs_write(sheet_name, df):
+    conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=df)
+
+# 4) Prueba de lectura: lee la pestaña Inventario
+st.subheader("Lectura de Inventario")
+try:
+    df_inventario = gs_read("Inventario")
+    st.dataframe(df_inventario)
+    st.success("Inventario leído correctamente desde Google Sheets ✅")
+except Exception as e:
+    st.error(f"Error leyendo Inventario: {e}")
+
+# 5) Prueba de escritura: agrega una fila de prueba en Inventario
+st.subheader("Escritura de prueba en Inventario")
+try:
+    df_test = pd.DataFrame([{"Prueba": "OK", "Fecha": "2025-11-19"}])
+    gs_write("Inventario", df_test)
+    st.success("Fila de prueba escrita en Inventario ✅ (revisa tu Google Sheet)")
+except Exception as e:
+    st.error(f"Error escribiendo en Inventario: {e}")
