@@ -8,7 +8,7 @@ st.set_page_config(page_title="ERP Zapatillas", page_icon="👟", layout="wide")
 st.title("👟 ERP para marca de zapatillas")
 
 # ---------------- Configuración de tallas ----------------
-SIZES = [35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45]
+SIZES = [35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,46]
 
 # ---------------- Estado inicial ----------------
 def init_state():
