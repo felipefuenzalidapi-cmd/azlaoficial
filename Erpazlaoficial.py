@@ -4,6 +4,100 @@ import numpy as np
 from io import BytesIO
 from datetime import datetime, date
 
+import streamlit as st
+import pandas as pd
+import gspread
+from google.oauth2.service_account import Credentials
+
+st.title("ERP Zapatillas - Conexión Completa a Google Sheets")
+
+# URL de tu Google Sheet
+SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1-1-7J_xHkmJQ7fjQLdHjEXatzJKHbg9btUqczwz1q3c/edit"
+
+# Scopes necesarios
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+]
+
+# Crear cliente gspread con los secrets
+def get_gspread_client():
+    sa = st.secrets["google_service_account"]
+    creds = Credentials.from_service_account_info(sa, scopes=SCOPES)
+    return gspread.authorize(creds)
+
+# Abrir el sheet por URL
+def open_sheet_by_url(client, url):
+    return client.open_by_url(url)
+
+# Funciones auxiliares
+def gs_read(sh, sheet_name):
+    try:
+        ws = sh.worksheet(sheet_name)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title=sheet_name, rows=100, cols=20)
+    rows = ws.get_all_values()
+    return pd.DataFrame(rows[1:], columns=rows[0]) if rows else pd.DataFrame()
+
+def gs_write(sh, sheet_name, df):
+    ws = sh.worksheet(sheet_name)
+    data = [df.columns.tolist()] + df.values.tolist()
+    ws.update(data)
+
+# Conexión
+try:
+    client = get_gspread_client()
+    sh = open_sheet_by_url(client, SPREADSHEET_URL)
+
+    # 1) Inventario
+    st.subheader("Inventario")
+    df_inventario = gs_read(sh, "Inventario")
+    st.dataframe(df_inventario)
+
+    # 2) Ventas
+    st.subheader("Ventas")
+    df_ventas = gs_read(sh, "Ventas")
+    st.dataframe(df_ventas)
+
+    # 3) Gastos
+    st.subheader("Gastos")
+    df_gastos = gs_read(sh, "Gastos")
+    st.dataframe(df_gastos)
+
+    # 4) Clientes
+    st.subheader("Clientes")
+    df_clientes = gs_read(sh, "Clientes")
+    st.dataframe(df_clientes)
+
+    # 5) Proveedores
+    st.subheader("Proveedores")
+    df_proveedores = gs_read(sh, "Proveedores")
+    st.dataframe(df_proveedores)
+
+    # 6) Flujo de Caja
+    st.subheader("Flujo de Caja")
+    df_flujo = gs_read(sh, "FlujoCaja")
+    st.dataframe(df_flujo)
+
+    # 7) Estado de Resultados (calculado)
+    st.subheader("Estado de Resultados")
+    ingresos = df_ventas["Monto"].astype(float).sum() if not df_ventas.empty else 0
+    gastos = df_gastos["Monto"].astype(float).sum() if not df_gastos.empty else 0
+    utilidad = ingresos - gastos
+    df_estado = pd.DataFrame([{
+        "Ingresos": ingresos,
+        "Gastos": gastos,
+        "Utilidad Neta": utilidad
+    }])
+    st.dataframe(df_estado)
+    gs_write(sh, "EstadoResultados", df_estado)
+
+    st.success("Todas las pestañas conectadas y sincronizadas ✅")
+
+except Exception as e:
+    st.error(f"Fallo de conexión o escritura: {e}")
+
+
 st.set_page_config(page_title="ERP Zapatillas", page_icon="👟", layout="wide")
 st.title("👟 ERP para marca de zapatillas")
 
