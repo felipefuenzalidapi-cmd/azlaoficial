@@ -2,3 +2,4 @@ streamlit==1.39.0
 pandas
 numpy
 xlsxwriter
+streamlit-gsheets-connection
