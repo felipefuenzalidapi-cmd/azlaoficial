@@ -368,41 +368,44 @@ tab_inv, tab_sales, tab_exp, tab_crm, tab_sup, tab_reports, tab_cf, tab_results 
 # =========================
 with tab_inv:
     st.subheader("Agregar producto")
-    tipo = st.selectbox("Tipo de producto", TIPOS_PRODUCTO, key="inv_tipo")
-    c1, c2, c3 = st.columns([2,2,2])
-    with c1:
-        nombre = st.text_input("Nombre del modelo", key="inv_nombre")
-        categoria = st.text_input("Categoría", key="inv_categoria")
-    with c2:
-        codigo = st.text_input("Código", key="inv_codigo")
-        proveedor = st.text_input("Proveedor", key="inv_proveedor")
-    with c3:
-        precio = st.number_input("Precio unitario (venta)", min_value=0.0, value=0.0, step=1000.0, key="inv_precio")
-        costo = st.number_input("Costo directo (unitario)", min_value=0.0, value=0.0, step=1000.0, key="inv_costo")
+    # CAMBIO: formulario con clear_on_submit=True para limpiar inputs tras agregar
+    with st.form("inv_add_form", clear_on_submit=True):
+        tipo = st.selectbox("Tipo de producto", TIPOS_PRODUCTO, key="inv_tipo")
+        c1, c2, c3 = st.columns([2,2,2])
+        with c1:
+            nombre = st.text_input("Nombre del modelo", key="inv_nombre")
+            categoria = st.text_input("Categoría", key="inv_categoria")
+        with c2:
+            codigo = st.text_input("Código", key="inv_codigo")
+            proveedor = st.text_input("Proveedor", key="inv_proveedor")
+        with c3:
+            precio = st.number_input("Precio unitario (venta)", min_value=0.0, value=0.0, step=1000.0, key="inv_precio")
+            costo = st.number_input("Costo directo (unitario)", min_value=0.0, value=0.0, step=1000.0, key="inv_costo")
 
-    stocks_por_talla = {}
-    stock_otro = None
-    if tipo == "Zapatillas":
-        st.markdown("#### Stock por talla (zapatillas)")
-        cols = st.columns(6)
-        for idx, t in enumerate(TALLAS_ZAPATILLAS):
-            with cols[idx % 6]:
-                stocks_por_talla[t] = st.number_input(f"Talla {t}", min_value=0, value=0, step=1, key=f"inv_tz_{t}")
-    elif tipo == "Ropa":
-        st.markdown("#### Stock por talla (ropa)")
-        cols = st.columns(5)
-        for idx, t in enumerate(TALLAS_ROPA):
-            with cols[idx % 5]:
-                stocks_por_talla[t] = st.number_input(f"Talla {t}", min_value=0, value=0, step=1, key=f"inv_tr_{t}")
-    else:
-        st.markdown("#### Stock para otro producto (sin tallas)")
-        stock_otro = st.number_input("Stock total", min_value=0, value=0, step=1, key="inv_stock_otro")
-
-    if st.button("Agregar producto", type="primary", key="inv_add"):
-        if nombre and tipo:
-            add_product(tipo, nombre, codigo, categoria, proveedor, precio, costo, stocks_por_talla, stock_otro)
+        stocks_por_talla = {}
+        stock_otro = None
+        if tipo == "Zapatillas":
+            st.markdown("#### Stock por talla (zapatillas)")
+            cols = st.columns(6)
+            for idx, t in enumerate(TALLAS_ZAPATILLAS):
+                with cols[idx % 6]:
+                    stocks_por_talla[t] = st.number_input(f"Talla {t}", min_value=0, value=0, step=1, key=f"inv_tz_{t}")
+        elif tipo == "Ropa":
+            st.markdown("#### Stock por talla (ropa)")
+            cols = st.columns(5)
+            for idx, t in enumerate(TALLAS_ROPA):
+                with cols[idx % 5]:
+                    stocks_por_talla[t] = st.number_input(f"Talla {t}", min_value=0, value=0, step=1, key=f"inv_tr_{t}")
         else:
-            st.error("Ingresa el nombre y tipo de producto.")
+            st.markdown("#### Stock para otro producto (sin tallas)")
+            stock_otro = st.number_input("Stock total", min_value=0, value=0, step=1, key="inv_stock_otro")
+
+        submitted_inv = st.form_submit_button("Agregar producto")
+        if submitted_inv:
+            if nombre and tipo:
+                add_product(tipo, nombre, codigo, categoria, proveedor, precio, costo, stocks_por_talla, stock_otro)
+            else:
+                st.error("Ingresa el nombre y tipo de producto.")
 
     st.divider()
     st.subheader("Inventario actual")
@@ -469,7 +472,8 @@ with tab_inv:
 # =========================
 with tab_sales:
     st.subheader("Registrar venta múltiple")
-    with st.form("venta_multiple_form", clear_on_submit=False):
+    # CAMBIO: clear_on_submit=True para limpiar el formulario tras registrar
+    with st.form("venta_multiple_form", clear_on_submit=True):
         fecha_v = st.date_input("Fecha", datetime.today(), key="ventas_fecha")
         comprador = st.text_input("Nombre del comprador", key="ventas_comprador")
         metodo_pago = st.selectbox("Método de pago", METODOS_PAGO, key="ventas_metodo_pago")
