@@ -398,10 +398,10 @@ with tab_inv:
 
     # Filtros avanzados
     with st.expander("🔎 Filtros avanzados"):
-        filtro_prov = st.multiselect("Proveedor", sorted(st.session_state.df_inventario["Proveedor"].dropna().unique().tolist()))
-        filtro_cat = st.multiselect("Categoría", sorted(st.session_state.df_inventario["Categoría"].dropna().unique().tolist()))
-        filtro_tipo = st.multiselect("Tipo de producto", TIPOS_PRODUCTO)
-        stock_bajo = st.checkbox(f"Solo stock bajo (≤ {st.session_state.low_stock_threshold})")
+        filtro_prov = st.multiselect("Proveedor", sorted(st.session_state.df_inventario["Proveedor"].dropna().unique().tolist()), key="filtro_prov_inv")
+        filtro_cat = st.multiselect("Categoría", sorted(st.session_state.df_inventario["Categoría"].dropna().unique().tolist()), key="filtro_cat_inv")
+        filtro_tipo_inv = st.multiselect("Tipo de producto", TIPOS_PRODUCTO, key="filtro_tipo_inv")
+        stock_bajo = st.checkbox(f"Solo stock bajo (≤ {st.session_state.low_stock_threshold})", key="stock_bajo_inv")
 
     search_inv = st.text_input("Buscar texto libre (modelo, código, categoría, proveedor)", key="inv_search")
     inv_view = ensure_inventory_columns(st.session_state.df_inventario.copy())
@@ -411,8 +411,8 @@ with tab_inv:
         inv_view = inv_view[inv_view["Proveedor"].isin(filtro_prov)]
     if filtro_cat:
         inv_view = inv_view[inv_view["Categoría"].isin(filtro_cat)]
-    if filtro_tipo:
-        inv_view = inv_view[inv_view["Tipo"].isin(filtro_tipo)]
+    if filtro_tipo_inv:
+        inv_view = inv_view[inv_view["Tipo"].isin(filtro_tipo_inv)]
     if stock_bajo:
         inv_view = inv_view[inv_view["StockTotal"] <= st.session_state.low_stock_threshold]
     if not inv_view.empty and search_inv:
@@ -512,9 +512,9 @@ with tab_sales:
 
     # Filtros avanzados
     with st.expander("🔎 Filtros avanzados"):
-        filtro_cliente = st.multiselect("Cliente", sorted(st.session_state.df_ventas["Comprador"].dropna().unique().tolist()))
-        filtro_prod = st.multiselect("Producto", sorted(st.session_state.df_ventas["Producto"].dropna().unique().tolist()))
-        filtro_tipo = st.multiselect("Tipo de producto", TIPOS_PRODUCTO)
+        filtro_cliente = st.multiselect("Cliente", sorted(st.session_state.df_ventas["Comprador"].dropna().unique().tolist()), key="filtro_cliente_ventas")
+        filtro_prod = st.multiselect("Producto", sorted(st.session_state.df_ventas["Producto"].dropna().unique().tolist()), key="filtro_prod_ventas")
+        filtro_tipo_ventas = st.multiselect("Tipo de producto", TIPOS_PRODUCTO, key="filtro_tipo_ventas")
 
     colf1, colf2, colf3 = st.columns([2,1,1])
     with colf1:
@@ -531,8 +531,8 @@ with tab_sales:
             v_view = v_view[v_view["Comprador"].isin(filtro_cliente)]
         if filtro_prod:
             v_view = v_view[v_view["Producto"].isin(filtro_prod)]
-        if filtro_tipo:
-            v_view = v_view[v_view["Tipo"].isin(filtro_tipo)]
+        if filtro_tipo_ventas:
+            v_view = v_view[v_view["Tipo"].isin(filtro_tipo_ventas)]
         if search_v:
             mask_v = v_view.apply(lambda r: search_v.lower() in str(r.values).lower(), axis=1)
             v_view = v_view[mask_v]
@@ -619,7 +619,7 @@ with tab_exp:
 
     # Filtros avanzados
     with st.expander("🔎 Filtros avanzados"):
-        filtro_tipo = st.multiselect("Tipo de gasto", sorted(st.session_state.df_gastos["Tipo"].dropna().unique().tolist()))
+        filtro_tipo = st.multiselect("Tipo de gasto", sorted(st.session_state.df_gastos["Tipo"].dropna().unique().tolist()), key="filtro_tipo_gastos")
         search_g = st.text_input("Buscar texto (tipo, nota)", key="gastos_search_adv")
 
     colg1, colg2, colg3 = st.columns([2,1,1])
