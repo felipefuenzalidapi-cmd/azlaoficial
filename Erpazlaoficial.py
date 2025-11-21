@@ -11,10 +11,10 @@ st.set_page_config(page_title="ERP Zapatillas", page_icon="👟", layout="wide")
 st.title("👟 ERP para marca de zapatillas")
 
 # =========================
-# Catálogos de tallas
+# Catálogos de tallas y tipos
 # =========================
 TALLAS_ZAPATILLAS = [35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
-TALLAS_ROPA = ["XS", "S", "M", "L", "XL", "XXL"]
+TALLAS_ROPA = ["XS", "S", "M", "L", "XL"]
 TIPOS_PRODUCTO = ["Zapatillas", "Ropa", "Otro"]
 
 # =========================
@@ -23,12 +23,9 @@ TIPOS_PRODUCTO = ["Zapatillas", "Ropa", "Otro"]
 def init_state():
     # Inventario
     if "df_inventario" not in st.session_state:
-        # Columnas base comunes
         base_cols = ["Tipo", "Producto", "Código", "Categoría", "Proveedor", "Precio", "CostoDirecto"]
-        # Columnas de tallas (zapatillas y ropa)
         shoe_cols = [f"Talla_{t}" for t in TALLAS_ZAPATILLAS]
         ropa_cols = [f"Talla_{t}" for t in TALLAS_ROPA]
-        # Stock total y observaciones
         st.session_state.df_inventario = pd.DataFrame(columns=base_cols + shoe_cols + ropa_cols + ["StockTotal"])
     # Ventas
     if "df_ventas" not in st.session_state:
@@ -79,15 +76,7 @@ def download_excel(df_dict):
 def most_common(series):
     return series.value_counts().idxmax() if not series.empty else None
 
-def compute_stock_total_row(row):
-    # Suma todas las columnas de tallas presentes (zapatillas + ropa)
-    total = 0
-    for col in [f"Talla_{t}" for t in TALLAS_ZAPATILLAS] + [f"Talla_{t}" for t in TALLAS_ROPA]:
-        total += int(row.get(col, 0) or 0)
-    return int(total)
-
 def ensure_inventory_columns(df):
-    # Garantiza que todas las columnas de inventario existan
     base_cols = ["Tipo", "Producto", "Código", "Categoría", "Proveedor", "Precio", "CostoDirecto"]
     shoe_cols = [f"Talla_{t}" for t in TALLAS_ZAPATILLAS]
     ropa_cols = [f"Talla_{t}" for t in TALLAS_ROPA]
@@ -97,8 +86,14 @@ def ensure_inventory_columns(df):
             df[c] = 0 if c.startswith("Talla_") or c == "StockTotal" else ""
     return df[all_cols]
 
+def compute_stock_total_row(row):
+    total = 0
+    for col in [f"Talla_{t}" for t in TALLAS_ZAPATILLAS] + [f"Talla_{t}" for t in TALLAS_ROPA]:
+        total += int(row.get(col, 0) or 0)
+    return int(total)
+
 # =========================
-# Funciones de negocio
+# Inventario: agregar/ajustar
 # =========================
 def add_product(tipo, nombre, codigo, categoria, proveedor, precio, costo, stocks_por_talla, stock_otro=None):
     df = ensure_inventory_columns(st.session_state.df_inventario.copy())
@@ -111,8 +106,7 @@ def add_product(tipo, nombre, codigo, categoria, proveedor, precio, costo, stock
         "Precio": float(precio),
         "CostoDirecto": float(costo),
     }
-
-    # Inicializar todas las tallas en 0
+    # Inicializar tallas en 0
     for t in TALLAS_ZAPATILLAS:
         record[f"Talla_{t}"] = 0
     for t in TALLAS_ROPA:
@@ -127,7 +121,6 @@ def add_product(tipo, nombre, codigo, categoria, proveedor, precio, costo, stock
             record[f"Talla_{t}"] = int(qty)
         record["StockTotal"] = sum(int(q) for q in stocks_por_talla.values())
     else:
-        # Otro sin tallas
         record["StockTotal"] = int(stock_otro or 0)
 
     st.session_state.df_inventario = pd.concat([df, pd.DataFrame([record])], ignore_index=True)
@@ -139,9 +132,9 @@ def decrement_inventory_for_sale(producto, tipo, talla, cantidad):
     if len(idxs) == 0:
         st.error(f"Producto no encontrado: {producto}")
         return False
-
     i = idxs[0]
-    if tipo == "Zapatillas":
+
+    if tipo in ["Zapatillas", "Ropa"]:
         talla_col = f"Talla_{talla}"
         if talla_col not in inv.columns:
             st.error(f"Talla no válida: {talla}")
@@ -151,19 +144,7 @@ def decrement_inventory_for_sale(producto, tipo, talla, cantidad):
             st.warning(f"Stock insuficiente para talla {talla}. Disponible {stock}, solicitado {cantidad}.")
             return False
         inv.at[i, talla_col] = stock - cantidad
-
-    elif tipo == "Ropa":
-        talla_col = f"Talla_{talla}"
-        if talla_col not in inv.columns:
-            st.error(f"Talla no válida: {talla}")
-            return False
-        stock = int(inv.at[i, talla_col] or 0)
-        if stock < cantidad:
-            st.warning(f"Stock insuficiente para talla {talla}. Disponible {stock}, solicitado {cantidad}.")
-            return False
-        inv.at[i, talla_col] = stock - cantidad
-
-    else:  # Otro
+    else:
         stock_total = int(inv.at[i, "StockTotal"] or 0)
         if stock_total < cantidad:
             st.warning(f"Stock total insuficiente. Disponible {stock_total}, solicitado {cantidad}.")
@@ -174,17 +155,39 @@ def decrement_inventory_for_sale(producto, tipo, talla, cantidad):
     st.session_state.df_inventario = inv
     return True
 
+def increment_inventory_for_sale(producto, tipo, talla, cantidad):
+    inv = ensure_inventory_columns(st.session_state.df_inventario.copy())
+    idxs = inv.index[inv["Producto"] == producto]
+    if len(idxs) == 0:
+        # Si no existe (ej. fue eliminado), no podemos devolver stock
+        return False
+    i = idxs[0]
+
+    if tipo in ["Zapatillas", "Ropa"]:
+        talla_col = f"Talla_{talla}"
+        if talla_col not in inv.columns:
+            return False
+        stock = int(inv.at[i, talla_col] or 0)
+        inv.at[i, talla_col] = stock + cantidad
+    else:
+        stock_total = int(inv.at[i, "StockTotal"] or 0)
+        inv.at[i, "StockTotal"] = stock_total + cantidad
+
+    inv.at[i, "StockTotal"] = compute_stock_total_row(inv.loc[i])
+    st.session_state.df_inventario = inv
+    return True
+
+# =========================
+# Ventas: registrar (simple/múltiple)
+# =========================
 def register_sale(fecha, producto, tipo, talla, cantidad, comprador, precio_venta):
-    # Ajuste de inventario
     ok = decrement_inventory_for_sale(producto, tipo, talla, cantidad)
     if not ok:
         return False
 
-    # Comisión pasarela
     comision_pct = st.session_state.comision_pasarela / 100.0
     comision = float(precio_venta) * comision_pct
 
-    # Registrar venta
     sales = st.session_state.df_ventas.copy()
     new_sale = pd.DataFrame([{
         "Fecha": to_date_str(fecha),
@@ -200,36 +203,34 @@ def register_sale(fecha, producto, tipo, talla, cantidad, comprador, precio_vent
     return True
 
 def register_multi_sale(fecha, comprador, items):
-    # items: lista de dicts con keys: Producto, Tipo, Talla(o None), Cantidad, PrecioVenta
-    # Primero validaciones para no dejar inventario inconsistente
+    # Validaciones previas
+    sim_inv = ensure_inventory_columns(st.session_state.df_inventario.copy())
     for item in items:
         producto = item["Producto"]
         tipo = item["Tipo"]
         talla = item.get("Talla", None)
         cantidad = int(item["Cantidad"])
-        # Validar sin aplicar (simulación rápida)
-        inv = ensure_inventory_columns(st.session_state.df_inventario.copy())
-        idxs = inv.index[inv["Producto"] == producto]
+        idxs = sim_inv.index[sim_inv["Producto"] == producto]
         if len(idxs) == 0:
             st.error(f"Producto no encontrado: {producto}")
             return False
         i = idxs[0]
         if tipo in ["Zapatillas", "Ropa"]:
             talla_col = f"Talla_{talla}"
-            if talla_col not in inv.columns:
+            if talla_col not in sim_inv.columns:
                 st.error(f"Talla no válida para {tipo}: {talla}")
                 return False
-            stock = int(inv.at[i, talla_col] or 0)
+            stock = int(sim_inv.at[i, talla_col] or 0)
             if stock < cantidad:
                 st.warning(f"Stock insuficiente: {producto} talla {talla}. Disponible {stock}, solicitado {cantidad}.")
                 return False
         else:
-            stock_total = int(inv.at[i, "StockTotal"] or 0)
+            stock_total = int(sim_inv.at[i, "StockTotal"] or 0)
             if stock_total < cantidad:
                 st.warning(f"Stock insuficiente: {producto} (Otro). Disponible {stock_total}, solicitado {cantidad}.")
                 return False
 
-    # Si todo ok, aplicar decrementos y registrar ventas
+    # Aplicar
     for item in items:
         producto = item["Producto"]
         tipo = item["Tipo"]
@@ -241,6 +242,9 @@ def register_multi_sale(fecha, comprador, items):
             return False
     return True
 
+# =========================
+# Gastos / Clientes / Proveedores
+# =========================
 def add_expense(fecha, tipo, monto, nota):
     exp = st.session_state.df_gastos.copy()
     new = pd.DataFrame([{
@@ -274,7 +278,6 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Exportar todo")
-
     def compute_cash_flow_df():
         IVA = st.session_state.iva_pct / 100.0
         sales = st.session_state.df_ventas.copy()
@@ -302,11 +305,11 @@ with st.sidebar:
         return flujo.reset_index().rename(columns={"index": "Mes"})
 
     bytes_all = download_excel({
-        "Inventario": st.session_state.df_inventario,
-        "Ventas": st.session_state.df_ventas,
-        "Gastos": st.session_state.df_gastos,
-        "Clientes": st.session_state.df_clientes,
-        "Proveedores": st.session_state.df_proveedores,
+        "Inventario": ensure_inventory_columns(st.session_state.df_inventario.copy()),
+        "Ventas": st.session_state.df_ventas.copy(),
+        "Gastos": st.session_state.df_gastos.copy(),
+        "Clientes": st.session_state.df_clientes.copy(),
+        "Proveedores": st.session_state.df_proveedores.copy(),
         "FlujoCaja": compute_cash_flow_df()
     })
     st.download_button("Descargar Excel (completo)", data=bytes_all, file_name="erp_zapatillas.xlsx", key="export_excel_all")
@@ -374,15 +377,13 @@ with tab_inv:
     edited_inv = st.data_editor(
         inv_view,
         num_rows="dynamic",
-        use_container_width=False,
         width="stretch",
         key="inv_editor"
     )
     if st.button("Guardar cambios de inventario", key="inv_save"):
-        # Recalcular StockTotal por fila
         edited_inv = ensure_inventory_columns(edited_inv)
         edited_inv["StockTotal"] = edited_inv.apply(compute_stock_total_row, axis=1)
-        st.session_state.df_inventario = edited_inv
+        st.session_state.df_inventario = edited_inv.reset_index(drop=True)
         st.success("Inventario actualizado.")
 
     st.markdown("#### Eliminar filas de inventario")
@@ -419,7 +420,6 @@ with tab_sales:
                     st.session_state.df_inventario["Producto"].tolist(),
                     key=f"venta_prod_{j}"
                 )
-                # Obtener tipo del producto seleccionado
                 tipo_prod = "-"
                 if producto:
                     fila = st.session_state.df_inventario[st.session_state.df_inventario["Producto"] == producto]
@@ -471,43 +471,64 @@ with tab_sales:
             mask_v = v_view.apply(lambda r: search_v.lower() in str(r.values).lower(), axis=1)
             v_view = v_view[mask_v]
 
-    st.markdown("#### Editar tabla de ventas")
+    st.markdown("#### Editar tabla de ventas (con reconciliación de stock)")
     edited_sales = st.data_editor(
         v_view,
         num_rows="dynamic",
-        use_container_width=False,
         width="stretch",
         key="ventas_editor"
     )
+
+    # Guardar cambios con reconciliación: revertimos todas las ventas antiguas al inventario, aplicamos las nuevas
     if st.button("Guardar cambios de ventas", key="ventas_save"):
-    # Reconciliar inventario según ventas editadas
-    old_sales = st.session_state.df_ventas.copy()
-    new_sales = edited_sales.reset_index(drop=True)
+        old_sales = st.session_state.df_ventas.copy()
+        new_sales = edited_sales.reset_index(drop=True)
 
-    # Reset inventario a estado inicial (sin ventas aplicadas)
-    inv = ensure_inventory_columns(st.session_state.df_inventario.copy())
-    inv["StockTotal"] = inv.apply(compute_stock_total_row, axis=1)
+        # Revertir inventario con ventas antiguas (devolver stock)
+        for _, sale in old_sales.iterrows():
+            producto = sale["Producto"]
+            tipo = sale["Tipo"]
+            talla = sale["Talla"] if sale["Talla"] != "-" else None
+            cantidad = int(sale["Cantidad"])
+            increment_inventory_for_sale(producto, tipo, talla, cantidad)
 
-    # Reaplicar todas las ventas editadas al inventario
-    for _, sale in new_sales.iterrows():
-        producto = sale["Producto"]
-        tipo = sale["Tipo"]
-        talla = sale["Talla"] if sale["Talla"] != "-" else None
-        cantidad = int(sale["Cantidad"])
-        precio = float(sale["PrecioVenta"])
-        # Ajustar inventario
-        decrement_inventory_for_sale(producto, tipo, talla, cantidad)
+        # Aplicar ventas nuevas (descontar stock)
+        ok_all = True
+        for _, sale in new_sales.iterrows():
+            producto = sale["Producto"]
+            tipo = sale["Tipo"]
+            talla = sale["Talla"] if sale["Talla"] != "-" else None
+            cantidad = int(sale["Cantidad"])
+            precio = float(sale["PrecioVenta"])
+            # Recalcular comisión
+            comision_pct = st.session_state.comision_pasarela / 100.0
+            sale["Comision"] = float(precio) * comision_pct
+            # Descontar
+            ok = decrement_inventory_for_sale(producto, tipo, talla, cantidad)
+            if not ok:
+                ok_all = False
+                break
 
-    # Guardar ventas corregidas
-    st.session_state.df_ventas = new_sales
-    st.success("Ventas actualizadas y stock reconciliado.")
+        if ok_all:
+            st.session_state.df_ventas = new_sales
+            st.success("Ventas actualizadas y stock reconciliado.")
+        else:
+            st.error("No se pudieron aplicar todas las ventas editadas. Se mantiene el estado anterior.")
 
-
-    st.markdown("#### Eliminar filas de ventas")
+    st.markdown("#### Eliminar filas de ventas (devuelve stock)")
     idx_v_del = st.multiselect("Selecciona índices a eliminar (ventas)", options=edited_sales.index.tolist(), key="ventas_del_sel")
     if st.button("Eliminar ventas seleccionadas", key="ventas_del_btn"):
+        # Devolver stock de las ventas eliminadas
+        for i in idx_v_del:
+            sale = edited_sales.loc[i]
+            producto = sale["Producto"]
+            tipo = sale["Tipo"]
+            talla = sale["Talla"] if sale["Talla"] != "-" else None
+            cantidad = int(sale["Cantidad"])
+            increment_inventory_for_sale(producto, tipo, talla, cantidad)
+        # Eliminar del DF de ventas
         st.session_state.df_ventas = edited_sales.drop(idx_v_del).reset_index(drop=True)
-        st.success("Ventas eliminadas.")
+        st.success("Ventas eliminadas y stock devuelto.")
 
 # =========================
 # Gastos
@@ -518,13 +539,13 @@ with tab_exp:
     with c1:
         fecha_g = st.date_input("Fecha del gasto", datetime.today(), key="gastos_fecha")
     with c2:
-        tipo = st.selectbox("Tipo", ["Marketing", "Envíos", "Costos directos de producto", "Shopify mensual", "Otros"], key="gastos_tipo")
+        tipo_g = st.selectbox("Tipo", ["Marketing","Envíos","Costos directos de producto","Shopify mensual","Otros"], key="gastos_tipo")
     with c3:
         monto = st.number_input("Monto", min_value=0.0, value=0.0, step=1000.0, key="gastos_monto")
     with c4:
         nota = st.text_input("Nota (opcional)", key="gastos_nota")
     if st.button("Agregar gasto", key="gastos_add"):
-        add_expense(fecha_g, tipo, monto, nota)
+        add_expense(fecha_g, tipo_g, monto, nota)
         st.success("Gasto registrado.")
 
     st.divider()
@@ -548,7 +569,6 @@ with tab_exp:
     edited_exp = st.data_editor(
         g_view,
         num_rows="dynamic",
-        use_container_width=False,
         width="stretch",
         key="gastos_editor"
     )
@@ -597,7 +617,6 @@ with tab_crm:
     edited_cli = st.data_editor(
         st.session_state.df_clientes.copy(),
         num_rows="dynamic",
-        use_container_width=False,
         width="stretch",
         key="cli_editor"
     )
@@ -614,11 +633,11 @@ with tab_crm:
     st.subheader("Ranking de clientes")
     if not st.session_state.df_ventas.empty:
         ventas_cli = st.session_state.df_ventas.groupby("Comprador").agg(
-            CantidadCompras=("Producto", "count"),
-            MontoTotal=("PrecioVenta", "sum")
+            CantidadCompras=("Producto","count"),
+            MontoTotal=("PrecioVenta","sum")
         ).reset_index()
 
-        orden = st.radio("Ordenar por:", ["Cantidad de compras", "Monto total"], key="crm_orden")
+        orden = st.radio("Ordenar por:", ["Cantidad de compras","Monto total"], key="crm_orden")
         if orden == "Cantidad de compras":
             ventas_cli = ventas_cli.sort_values("CantidadCompras", ascending=False)
         else:
@@ -661,7 +680,6 @@ with tab_sup:
     edited_sup = st.data_editor(
         st.session_state.df_proveedores.copy(),
         num_rows="dynamic",
-        use_container_width=False,
         width="stretch",
         key="sup_editor"
     )
@@ -850,9 +868,9 @@ st.divider()
 st.subheader("Exportar datos")
 bytes_all_final = download_excel({
     "Inventario": ensure_inventory_columns(st.session_state.df_inventario.copy()),
-    "Ventas": st.session_state.df_ventas,
-    "Gastos": st.session_state.df_gastos,
-    "Clientes": st.session_state.df_clientes,
-    "Proveedores": st.session_state.df_proveedores
+    "Ventas": st.session_state.df_ventas.copy(),
+    "Gastos": st.session_state.df_gastos.copy(),
+    "Clientes": st.session_state.df_clientes.copy(),
+    "Proveedores": st.session_state.df_proveedores.copy()
 })
 st.download_button("Descargar Excel (todos)", data=bytes_all_final, file_name="erp_zapatillas_todo.xlsx", key="export_excel_all_bottom")
