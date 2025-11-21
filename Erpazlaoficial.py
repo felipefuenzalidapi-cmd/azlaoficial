@@ -480,9 +480,28 @@ with tab_sales:
         key="ventas_editor"
     )
     if st.button("Guardar cambios de ventas", key="ventas_save"):
-        # Nota: editar ventas no re-ajusta inventario automáticamente
-        st.session_state.df_ventas = edited_sales.reset_index(drop=True)
-        st.success("Ventas actualizadas.")
+    # Reconciliar inventario según ventas editadas
+    old_sales = st.session_state.df_ventas.copy()
+    new_sales = edited_sales.reset_index(drop=True)
+
+    # Reset inventario a estado inicial (sin ventas aplicadas)
+    inv = ensure_inventory_columns(st.session_state.df_inventario.copy())
+    inv["StockTotal"] = inv.apply(compute_stock_total_row, axis=1)
+
+    # Reaplicar todas las ventas editadas al inventario
+    for _, sale in new_sales.iterrows():
+        producto = sale["Producto"]
+        tipo = sale["Tipo"]
+        talla = sale["Talla"] if sale["Talla"] != "-" else None
+        cantidad = int(sale["Cantidad"])
+        precio = float(sale["PrecioVenta"])
+        # Ajustar inventario
+        decrement_inventory_for_sale(producto, tipo, talla, cantidad)
+
+    # Guardar ventas corregidas
+    st.session_state.df_ventas = new_sales
+    st.success("Ventas actualizadas y stock reconciliado.")
+
 
     st.markdown("#### Eliminar filas de ventas")
     idx_v_del = st.multiselect("Selecciona índices a eliminar (ventas)", options=edited_sales.index.tolist(), key="ventas_del_sel")
