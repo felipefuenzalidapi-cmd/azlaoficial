@@ -19,6 +19,7 @@ st.markdown("---")
 TALLAS_ZAPATILLAS = [35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
 TALLAS_ROPA = ["XS", "S", "M", "L", "XL"]
 TIPOS_PRODUCTO = ["Zapatillas", "Ropa", "Otro"]
+METODOS_PAGO = ["Efectivo", "Tarjeta", "Transferencia"]
 
 # =========================
 # Estado inicial
@@ -30,11 +31,15 @@ def init_state():
         shoe_cols = [f"Talla_{t}" for t in TALLAS_ZAPATILLAS]
         ropa_cols = [f"Talla_{t}" for t in TALLAS_ROPA]
         st.session_state.df_inventario = pd.DataFrame(columns=base_cols + shoe_cols + ropa_cols + ["StockTotal"])
-    # Ventas
+    # Ventas (ahora incluye MetodoPago)
     if "df_ventas" not in st.session_state:
         st.session_state.df_ventas = pd.DataFrame(columns=[
-            "Fecha", "Producto", "Tipo", "Talla", "Cantidad", "Comprador", "PrecioVenta", "Comision"
+            "Fecha", "Producto", "Tipo", "Talla", "Cantidad", "Comprador", "PrecioVenta", "MetodoPago", "Comision"
         ])
+    else:
+        # Asegurar columna MetodoPago si faltara
+        if "MetodoPago" not in st.session_state.df_ventas.columns:
+            st.session_state.df_ventas["MetodoPago"] = ""
     # Gastos
     if "df_gastos" not in st.session_state:
         st.session_state.df_gastos = pd.DataFrame(columns=["Fecha", "Tipo", "Monto", "Nota"])
@@ -183,13 +188,19 @@ def increment_inventory_for_sale(producto, tipo, talla, cantidad):
 # =========================
 # Ventas: registrar (simple/múltiple)
 # =========================
-def register_sale(fecha, producto, tipo, talla, cantidad, comprador, precio_venta):
+def compute_commission(precio_venta, metodo_pago):
+    # Comisión solo si es "Tarjeta"
+    if metodo_pago == "Tarjeta":
+        comision_pct = st.session_state.comision_pasarela / 100.0
+        return float(precio_venta) * comision_pct
+    return 0.0
+
+def register_sale(fecha, producto, tipo, talla, cantidad, comprador, precio_venta, metodo_pago):
     ok = decrement_inventory_for_sale(producto, tipo, talla, cantidad)
     if not ok:
         return False
 
-    comision_pct = st.session_state.comision_pasarela / 100.0
-    comision = float(precio_venta) * comision_pct
+    comision = compute_commission(precio_venta, metodo_pago)
 
     sales = st.session_state.df_ventas.copy()
     new_sale = pd.DataFrame([{
@@ -200,13 +211,14 @@ def register_sale(fecha, producto, tipo, talla, cantidad, comprador, precio_vent
         "Cantidad": int(cantidad),
         "Comprador": (comprador or "").strip(),
         "PrecioVenta": float(precio_venta),
+        "MetodoPago": metodo_pago,
         "Comision": comision
     }])
     st.session_state.df_ventas = pd.concat([sales, new_sale], ignore_index=True)
     return True
 
-def register_multi_sale(fecha, comprador, items):
-    # Validaciones previas
+def register_multi_sale(fecha, comprador, items, metodo_pago):
+    # Validaciones previas (stock)
     sim_inv = ensure_inventory_columns(st.session_state.df_inventario.copy())
     for item in items:
         producto = item["Producto"]
@@ -240,7 +252,7 @@ def register_multi_sale(fecha, comprador, items):
         talla = item.get("Talla", None)
         cantidad = int(item["Cantidad"])
         precio_venta = float(item["PrecioVenta"])
-        ok = register_sale(fecha, producto, tipo, talla, cantidad, comprador, precio_venta)
+        ok = register_sale(fecha, producto, tipo, talla, cantidad, comprador, precio_venta, metodo_pago)
         if not ok:
             return False
     return True
@@ -335,11 +347,10 @@ m1.metric("💰 Ventas del mes", f"${ventas_mes:,.0f}")
 m2.metric("💸 Gastos del mes", f"${gastos_mes:,.0f}")
 m3.metric("📈 Margen neto", f"${margen_mes:,.0f}")
 
-# Gráfico rápido de ventas por producto (mes actual si hay)
+# Gráfico rápido de ventas por producto
 if not st.session_state.df_ventas.empty:
     ventas_df = st.session_state.df_ventas.copy()
     ventas_df["Fecha"] = pd.to_datetime(ventas_df["Fecha"])
-    ventas_df["Mes"] = ventas_df["Fecha"].dt.to_period("M").astype(str)
     ventas_prod = ventas_df.groupby("Producto")["PrecioVenta"].sum().sort_values(ascending=False)
     st.bar_chart(ventas_prod)
 
@@ -461,6 +472,7 @@ with tab_sales:
     with st.form("venta_multiple_form", clear_on_submit=False):
         fecha_v = st.date_input("Fecha", datetime.today(), key="ventas_fecha")
         comprador = st.text_input("Nombre del comprador", key="ventas_comprador")
+        metodo_pago = st.selectbox("Método de pago", METODOS_PAGO, key="ventas_metodo_pago")
 
         num_items = st.number_input("Número de ítems", min_value=1, value=1, step=1, key="ventas_num_items")
         items = []
@@ -503,7 +515,7 @@ with tab_sales:
             if not comprador:
                 st.error("Ingresa el nombre del comprador.")
             else:
-                ok = register_multi_sale(fecha_v, comprador, items)
+                ok = register_multi_sale(fecha_v, comprador, items, metodo_pago)
                 if ok:
                     st.success("Venta múltiple registrada.")
 
@@ -515,6 +527,7 @@ with tab_sales:
         filtro_cliente = st.multiselect("Cliente", sorted(st.session_state.df_ventas["Comprador"].dropna().unique().tolist()), key="filtro_cliente_ventas")
         filtro_prod = st.multiselect("Producto", sorted(st.session_state.df_ventas["Producto"].dropna().unique().tolist()), key="filtro_prod_ventas")
         filtro_tipo_ventas = st.multiselect("Tipo de producto", TIPOS_PRODUCTO, key="filtro_tipo_ventas")
+        filtro_metodo_pago = st.multiselect("Método de pago", METODOS_PAGO, key="filtro_metodo_pago_ventas")
 
     colf1, colf2, colf3 = st.columns([2,1,1])
     with colf1:
@@ -533,6 +546,8 @@ with tab_sales:
             v_view = v_view[v_view["Producto"].isin(filtro_prod)]
         if filtro_tipo_ventas:
             v_view = v_view[v_view["Tipo"].isin(filtro_tipo_ventas)]
+        if filtro_metodo_pago:
+            v_view = v_view[v_view["MetodoPago"].isin(filtro_metodo_pago)]
         if search_v:
             mask_v = v_view.apply(lambda r: search_v.lower() in str(r.values).lower(), axis=1)
             v_view = v_view[mask_v]
@@ -560,15 +575,16 @@ with tab_sales:
 
         # Aplicar ventas nuevas (descontar stock)
         ok_all = True
-        for _, sale in new_sales.iterrows():
+        for i in range(len(new_sales)):
+            sale = new_sales.iloc[i]
             producto = sale["Producto"]
             tipo = sale["Tipo"]
             talla = sale["Talla"] if sale["Talla"] != "-" else None
             cantidad = int(sale["Cantidad"])
             precio = float(sale["PrecioVenta"])
-            # Recalcular comisión
-            comision_pct = st.session_state.comision_pasarela / 100.0
-            sale["Comision"] = float(precio) * comision_pct
+            metodo_pago_edit = sale["MetodoPago"] if "MetodoPago" in new_sales.columns and pd.notna(sale["MetodoPago"]) else "Efectivo"
+            # Recalcular comisión según método de pago
+            new_sales.at[i, "Comision"] = compute_commission(precio, metodo_pago_edit)
             # Descontar
             ok = decrement_inventory_for_sale(producto, tipo, talla, cantidad)
             if not ok:
@@ -744,8 +760,8 @@ with tab_sup:
     s1, s2 = st.columns([2,2])
     with s1:
         sup_nombre = st.text_input("Nombre del proveedor", key="sup_nombre")
-        sup_contacto = st.text_input("Contacto (teléfono/email)", key="sup_contacto")
     with s2:
+        sup_contacto = st.text_input("Contacto (teléfono/email)", key="sup_contacto")
         sup_notas = st.text_area("Notas proveedor", key="sup_notas")
     if st.button("Agregar proveedor", key="sup_add"):
         if sup_nombre:
@@ -803,6 +819,13 @@ with tab_reports:
             st.bar_chart(by_size, use_container_width=True)
         else:
             st.info("Sin cantidades por talla en el periodo.")
+
+        st.markdown("#### Ventas por método de pago (brutas)")
+        by_pay = sales_f.groupby("MetodoPago")["PrecioVenta"].sum().sort_values(ascending=False)
+        if not by_pay.empty:
+            st.bar_chart(by_pay, use_container_width=True)
+        else:
+            st.info("Sin datos por método de pago.")
 
         st.markdown("#### Ventas por mes (brutas)")
         sales_f["Mes"] = sales_f["Fecha"].dt.to_period("M").astype(str)
