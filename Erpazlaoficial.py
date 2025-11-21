@@ -186,76 +186,152 @@ def increment_inventory_for_sale(producto, tipo, talla, cantidad):
     return True
 
 # =========================
-# Ventas: registrar (simple/múltiple)
+# Ventas
 # =========================
-def compute_commission(precio_venta, metodo_pago):
-    # Comisión solo si es "Tarjeta"
-    if metodo_pago == "Tarjeta":
-        comision_pct = st.session_state.comision_pasarela / 100.0
-        return float(precio_venta) * comision_pct
-    return 0.0
+with tab_sales:
+    st.subheader("Registrar venta múltiple")
 
-def register_sale(fecha, producto, tipo, talla, cantidad, comprador, precio_venta, metodo_pago):
-    ok = decrement_inventory_for_sale(producto, tipo, talla, cantidad)
-    if not ok:
-        return False
+    # Controlar número de ítems fuera del form para que el UI se re-renderice
+    num_items = st.number_input("Número de ítems", min_value=1,
+                                value=st.session_state.get("ventas_num_items", 1),
+                                step=1, key="ventas_num_items_ctrl")
 
-    comision = compute_commission(precio_venta, metodo_pago)
+    with st.form("venta_multiple_form", clear_on_submit=True):
+        fecha_v = st.date_input("Fecha", datetime.today(), key="ventas_fecha")
+        comprador = st.text_input("Nombre del comprador", key="ventas_comprador")
+        metodo_pago = st.selectbox("Método de pago", METODOS_PAGO, key="ventas_metodo_pago")
 
-    sales = st.session_state.df_ventas.copy()
-    new_sale = pd.DataFrame([{
-        "Fecha": to_date_str(fecha),
-        "Producto": producto,
-        "Tipo": tipo,
-        "Talla": str(talla) if talla is not None else "-",
-        "Cantidad": int(cantidad),
-        "Comprador": (comprador or "").strip(),
-        "PrecioVenta": float(precio_venta),
-        "MetodoPago": metodo_pago,
-        "Comision": comision
-    }])
-    st.session_state.df_ventas = pd.concat([sales, new_sale], ignore_index=True)
-    return True
+        items = []
+        for j in range(int(num_items)):
+            st.markdown(f"##### Ítem {j+1}")
+            c1, c2, c3, c4 = st.columns([2,1,1,1])
 
-def register_multi_sale(fecha, comprador, items, metodo_pago):
-    # Validaciones previas (stock)
-    sim_inv = ensure_inventory_columns(st.session_state.df_inventario.copy())
-    for item in items:
-        producto = item["Producto"]
-        tipo = item["Tipo"]
-        talla = item.get("Talla", None)
-        cantidad = int(item["Cantidad"])
-        idxs = sim_inv.index[sim_inv["Producto"] == producto]
-        if len(idxs) == 0:
-            st.error(f"Producto no encontrado: {producto}")
-            return False
-        i = idxs[0]
-        if tipo in ["Zapatillas", "Ropa"]:
-            talla_col = f"Talla_{talla}"
-            if talla_col not in sim_inv.columns:
-                st.error(f"Talla no válida para {tipo}: {talla}")
-                return False
-            stock = int(sim_inv.at[i, talla_col] or 0)
-            if stock < cantidad:
-                st.warning(f"Stock insuficiente: {producto} talla {talla}. Disponible {stock}, solicitado {cantidad}.")
-                return False
+            with c1:
+                producto = st.selectbox(f"Producto {j+1}",
+                                        st.session_state.df_inventario["Producto"].tolist(),
+                                        key=f"venta_prod_{j}")
+                tipo_prod = "-"
+                if producto:
+                    fila = st.session_state.df_inventario[st.session_state.df_inventario["Producto"] == producto]
+                    if not fila.empty:
+                        tipo_prod = fila.iloc[0]["Tipo"]
+
+            with c2:
+                if tipo_prod == "Zapatillas":
+                    talla = st.selectbox(f"Talla {j+1}", TALLAS_ZAPATILLAS, key=f"venta_tz_{j}")
+                elif tipo_prod == "Ropa":
+                    talla = st.selectbox(f"Talla {j+1}", TALLAS_ROPA, key=f"venta_tr_{j}")
+                else:
+                    talla = None
+                    st.text_input(f"Talla {j+1} (N/A para Otro)", value="-", key=f"venta_ot_{j}")
+
+            with c3:
+                cantidad = st.number_input(f"Cantidad {j+1}", min_value=1, value=1, step=1, key=f"venta_cant_{j}")
+
+            with c4:
+                precio_venta = st.number_input(f"Precio {j+1}", min_value=0.0, value=0.0, step=1000.0, key=f"venta_prec_{j}")
+
+            items.append({
+                "Producto": producto,
+                "Tipo": tipo_prod,
+                "Talla": talla if tipo_prod in ["Zapatillas","Ropa"] else None,
+                "Cantidad": cantidad,
+                "PrecioVenta": precio_venta
+            })
+
+        submitted = st.form_submit_button("Registrar venta múltiple")
+        if submitted:
+            if not comprador:
+                st.error("Ingresa el nombre del comprador.")
+            else:
+                ok = register_multi_sale(fecha_v, comprador, items, metodo_pago)
+                if ok:
+                    st.success("Venta múltiple registrada.")
+
+    st.divider()
+    st.subheader("Historial de ventas")
+
+    # Filtros avanzados
+    with st.expander("🔎 Filtros avanzados"):
+        filtro_cliente = st.multiselect("Cliente", sorted(st.session_state.df_ventas["Comprador"].dropna().unique().tolist()), key="filtro_cliente_ventas")
+        filtro_prod = st.multiselect("Producto", sorted(st.session_state.df_ventas["Producto"].dropna().unique().tolist()), key="filtro_prod_ventas")
+        filtro_tipo_ventas = st.multiselect("Tipo de producto", TIPOS_PRODUCTO, key="filtro_tipo_ventas")
+        filtro_metodo_pago = st.multiselect("Método de pago", METODOS_PAGO, key="filtro_metodo_pago_ventas")
+
+    colf1, colf2, colf3 = st.columns([2,1,1])
+    with colf1:
+        search_v = st.text_input("Buscar (modelo, comprador, talla)", key="ventas_search")
+    with colf2:
+        v_ini = st.date_input("Desde", value=datetime.today().replace(day=1), key="ventas_desde")
+    with colf3:
+        v_fin = st.date_input("Hasta", value=datetime.today(), key="ventas_hasta")
+
+    v_view = st.session_state.df_ventas.copy()
+    if not v_view.empty:
+        v_view["Fecha"] = pd.to_datetime(v_view["Fecha"])
+        v_view = v_view[(v_view["Fecha"] >= pd.to_datetime(v_ini)) & (v_view["Fecha"] <= pd.to_datetime(v_fin))]
+        if filtro_cliente:
+            v_view = v_view[v_view["Comprador"].isin(filtro_cliente)]
+        if filtro_prod:
+            v_view = v_view[v_view["Producto"].isin(filtro_prod)]
+        if filtro_tipo_ventas:
+            v_view = v_view[v_view["Tipo"].isin(filtro_tipo_ventas)]
+        if filtro_metodo_pago:
+            v_view = v_view[v_view["MetodoPago"].isin(filtro_metodo_pago)]
+        if search_v:
+            mask_v = v_view.apply(lambda r: search_v.lower() in str(r.values).lower(), axis=1)
+            v_view = v_view[mask_v]
+
+    st.markdown("#### Editar tabla de ventas (con reconciliación de stock)")
+    edited_sales = st.data_editor(v_view, num_rows="dynamic", use_container_width=True, key="ventas_editor")
+
+    if st.button("Guardar cambios de ventas", key="ventas_save"):
+        old_sales = st.session_state.df_ventas.copy()
+        new_sales = edited_sales.reset_index(drop=True)
+
+        # Revertir inventario con ventas antiguas (devolver stock)
+        for _, sale in old_sales.iterrows():
+            producto = sale["Producto"]
+            tipo = sale["Tipo"]
+            talla = sale["Talla"] if sale["Talla"] != "-" else None
+            cantidad = int(sale["Cantidad"])
+            increment_inventory_for_sale(producto, tipo, talla, cantidad)
+
+        # Aplicar ventas nuevas (descontar stock)
+        ok_all = True
+        for i in range(len(new_sales)):
+            sale = new_sales.iloc[i]
+            producto = sale["Producto"]
+            tipo = sale["Tipo"]
+            talla = sale["Talla"] if sale["Talla"] != "-" else None
+            cantidad = int(sale["Cantidad"])
+            precio = float(sale["PrecioVenta"])
+            metodo_pago_edit = sale["MetodoPago"] if "MetodoPago" in new_sales.columns and pd.notna(sale["MetodoPago"]) else "Efectivo"
+            new_sales.at[i, "Comision"] = compute_commission(precio, metodo_pago_edit)
+            ok = decrement_inventory_for_sale(producto, tipo, talla, cantidad)
+            if not ok:
+                ok_all = False
+                break
+
+        if ok_all:
+            st.session_state.df_ventas = new_sales
+            st.success("Ventas actualizadas y stock reconciliado.")
         else:
-            stock_total = int(sim_inv.at[i, "StockTotal"] or 0)
-            if stock_total < cantidad:
-                st.warning(f"Stock insuficiente: {producto} (Otro). Disponible {stock_total}, solicitado {cantidad}.")
-                return False
+            st.error("No se pudieron aplicar todas las ventas editadas. Se mantiene el estado anterior.")
 
-    # Aplicar
-    for item in items:
-        producto = item["Producto"]
-        tipo = item["Tipo"]
-        talla = item.get("Talla", None)
-        cantidad = int(item["Cantidad"])
-        precio_venta = float(item["PrecioVenta"])
-        ok = register_sale(fecha, producto, tipo, talla, cantidad, comprador, precio_venta, metodo_pago)
-        if not ok:
-            return False
-    return True
+    st.markdown("#### Eliminar filas de ventas (devuelve stock)")
+    idx_v_del = st.multiselect("Selecciona índices a eliminar (ventas)", options=edited_sales.index.tolist(), key="ventas_del_sel")
+    if st.button("Eliminar ventas seleccionadas", key="ventas_del_btn"):
+        for i in idx_v_del:
+            sale = edited_sales.loc[i]
+            producto = sale["Producto"]
+            tipo = sale["Tipo"]
+            talla = sale["Talla"] if sale["Talla"] != "-" else None
+            cantidad = int(sale["Cantidad"])
+            increment_inventory_for_sale(producto, tipo, talla, cantidad)
+        st.session_state.df_ventas = edited_sales.drop(idx_v_del).reset_index(drop=True)
+        st.success("Ventas eliminadas y stock devuelto.")
+
 
 # =========================
 # Gastos / Clientes / Proveedores
