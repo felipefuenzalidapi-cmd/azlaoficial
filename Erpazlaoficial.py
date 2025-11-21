@@ -436,9 +436,17 @@ st.markdown("---")
 # Tabs principales
 # =========================
 tab_inv, tab_sales, tab_exp, tab_crm, tab_sup, tab_reports, tab_cf, tab_results = st.tabs(
-    ["🗃️ Inventario", "🧾 Ventas", "💸 Gastos", "👥 Clientes", "🏭 Proveedores", "📊 Reportes", "💵 Flujo de caja", "📈 Estado de resultados"]
+    [
+        "🗃️ Inventario",
+        "🧾 Ventas",
+        "💸 Gastos",
+        "👥 Clientes",
+        "🏭 Proveedores",
+        "📊 Reportes",
+        "💵 Flujo de caja",
+        "📈 Estado de resultados"
+    ]
 )
-
 # =========================
 # Inventario
 # =========================
