@@ -8,7 +8,10 @@ from datetime import datetime, date
 # Configuración general
 # =========================
 st.set_page_config(page_title="ERP Zapatillas", page_icon="👟", layout="wide")
+
+# Encabezado y dashboard inicial
 st.title("👟 ERP para marca de zapatillas")
+st.markdown("---")
 
 # =========================
 # Catálogos de tallas y tipos
@@ -315,6 +318,34 @@ with st.sidebar:
     st.download_button("Descargar Excel (completo)", data=bytes_all, file_name="erp_zapatillas.xlsx", key="export_excel_all")
 
 # =========================
+# Dashboard inicial
+# =========================
+st.header("📊 Dashboard")
+month_str = datetime.today().strftime("%Y-%m")
+ventas_mes = st.session_state.df_ventas[
+    st.session_state.df_ventas["Fecha"].astype(str).str.startswith(month_str)
+]["PrecioVenta"].sum() if not st.session_state.df_ventas.empty else 0.0
+gastos_mes = st.session_state.df_gastos[
+    st.session_state.df_gastos["Fecha"].astype(str).str.startswith(month_str)
+]["Monto"].sum() if not st.session_state.df_gastos.empty else 0.0
+margen_mes = ventas_mes - gastos_mes
+
+m1, m2, m3 = st.columns(3)
+m1.metric("💰 Ventas del mes", f"${ventas_mes:,.0f}")
+m2.metric("💸 Gastos del mes", f"${gastos_mes:,.0f}")
+m3.metric("📈 Margen neto", f"${margen_mes:,.0f}")
+
+# Gráfico rápido de ventas por producto (mes actual si hay)
+if not st.session_state.df_ventas.empty:
+    ventas_df = st.session_state.df_ventas.copy()
+    ventas_df["Fecha"] = pd.to_datetime(ventas_df["Fecha"])
+    ventas_df["Mes"] = ventas_df["Fecha"].dt.to_period("M").astype(str)
+    ventas_prod = ventas_df.groupby("Producto")["PrecioVenta"].sum().sort_values(ascending=False)
+    st.bar_chart(ventas_prod)
+
+st.markdown("---")
+
+# =========================
 # Tabs principales
 # =========================
 tab_inv, tab_sales, tab_exp, tab_crm, tab_sup, tab_reports, tab_cf, tab_results = st.tabs(
@@ -364,8 +395,26 @@ with tab_inv:
 
     st.divider()
     st.subheader("Inventario actual")
-    search_inv = st.text_input("Buscar (modelo, código, categoría, proveedor)", key="inv_search")
+
+    # Filtros avanzados
+    with st.expander("🔎 Filtros avanzados"):
+        filtro_prov = st.multiselect("Proveedor", sorted(st.session_state.df_inventario["Proveedor"].dropna().unique().tolist()))
+        filtro_cat = st.multiselect("Categoría", sorted(st.session_state.df_inventario["Categoría"].dropna().unique().tolist()))
+        filtro_tipo = st.multiselect("Tipo de producto", TIPOS_PRODUCTO)
+        stock_bajo = st.checkbox(f"Solo stock bajo (≤ {st.session_state.low_stock_threshold})")
+
+    search_inv = st.text_input("Buscar texto libre (modelo, código, categoría, proveedor)", key="inv_search")
     inv_view = ensure_inventory_columns(st.session_state.df_inventario.copy())
+
+    # Aplicar filtros
+    if filtro_prov:
+        inv_view = inv_view[inv_view["Proveedor"].isin(filtro_prov)]
+    if filtro_cat:
+        inv_view = inv_view[inv_view["Categoría"].isin(filtro_cat)]
+    if filtro_tipo:
+        inv_view = inv_view[inv_view["Tipo"].isin(filtro_tipo)]
+    if stock_bajo:
+        inv_view = inv_view[inv_view["StockTotal"] <= st.session_state.low_stock_threshold]
     if not inv_view.empty and search_inv:
         mask = np.column_stack([
             inv_view[col].astype(str).str.contains(search_inv, case=False, na=False)
@@ -373,11 +422,15 @@ with tab_inv:
         ]).any(axis=1)
         inv_view = inv_view[mask]
 
+    # Íconos según tipo de producto
+    if not inv_view.empty:
+        inv_view["Icono"] = inv_view["Tipo"].map({"Zapatillas": "👟", "Ropa": "👕", "Otro": "📦"})
+
     st.markdown("#### Editar tabla de inventario")
     edited_inv = st.data_editor(
         inv_view,
         num_rows="dynamic",
-        width="stretch",
+        use_container_width=True,
         key="inv_editor"
     )
     if st.button("Guardar cambios de inventario", key="inv_save"):
@@ -398,7 +451,7 @@ with tab_inv:
         st.markdown("✅ No hay modelos con stock total bajo.")
     else:
         st.warning(f"⚠️ Stock total bajo (≤ {st.session_state.low_stock_threshold})")
-        st.dataframe(low_df, width="stretch")
+        st.dataframe(low_df, use_container_width=True)
 
 # =========================
 # Ventas
@@ -456,6 +509,13 @@ with tab_sales:
 
     st.divider()
     st.subheader("Historial de ventas")
+
+    # Filtros avanzados
+    with st.expander("🔎 Filtros avanzados"):
+        filtro_cliente = st.multiselect("Cliente", sorted(st.session_state.df_ventas["Comprador"].dropna().unique().tolist()))
+        filtro_prod = st.multiselect("Producto", sorted(st.session_state.df_ventas["Producto"].dropna().unique().tolist()))
+        filtro_tipo = st.multiselect("Tipo de producto", TIPOS_PRODUCTO)
+
     colf1, colf2, colf3 = st.columns([2,1,1])
     with colf1:
         search_v = st.text_input("Buscar (modelo, comprador, talla)", key="ventas_search")
@@ -467,6 +527,12 @@ with tab_sales:
     if not v_view.empty:
         v_view["Fecha"] = pd.to_datetime(v_view["Fecha"])
         v_view = v_view[(v_view["Fecha"] >= pd.to_datetime(v_ini)) & (v_view["Fecha"] <= pd.to_datetime(v_fin))]
+        if filtro_cliente:
+            v_view = v_view[v_view["Comprador"].isin(filtro_cliente)]
+        if filtro_prod:
+            v_view = v_view[v_view["Producto"].isin(filtro_prod)]
+        if filtro_tipo:
+            v_view = v_view[v_view["Tipo"].isin(filtro_tipo)]
         if search_v:
             mask_v = v_view.apply(lambda r: search_v.lower() in str(r.values).lower(), axis=1)
             v_view = v_view[mask_v]
@@ -475,7 +541,7 @@ with tab_sales:
     edited_sales = st.data_editor(
         v_view,
         num_rows="dynamic",
-        width="stretch",
+        use_container_width=True,
         key="ventas_editor"
     )
 
@@ -550,26 +616,39 @@ with tab_exp:
 
     st.divider()
     st.subheader("Historial de gastos")
+
+    # Filtros avanzados
+    with st.expander("🔎 Filtros avanzados"):
+        filtro_tipo = st.multiselect("Tipo de gasto", sorted(st.session_state.df_gastos["Tipo"].dropna().unique().tolist()))
+        search_g = st.text_input("Buscar texto (tipo, nota)", key="gastos_search_adv")
+
     colg1, colg2, colg3 = st.columns([2,1,1])
     with colg1:
-        search_g = st.text_input("Buscar (tipo, nota)", key="gastos_search")
+        search_g_simple = st.text_input("Buscar (simple)", key="gastos_search")
     with colg2:
         g_ini = st.date_input("Desde", value=datetime.today().replace(day=1), key="gastos_desde")
     with colg3:
         g_fin = st.date_input("Hasta", value=datetime.today(), key="gastos_hasta")
+
     g_view = st.session_state.df_gastos.copy()
     if not g_view.empty:
         g_view["Fecha"] = pd.to_datetime(g_view["Fecha"])
         g_view = g_view[(g_view["Fecha"] >= pd.to_datetime(g_ini)) & (g_view["Fecha"] <= pd.to_datetime(g_fin))]
+        if filtro_tipo:
+            g_view = g_view[g_view["Tipo"].isin(filtro_tipo)]
+        # búsquedas
         if search_g:
-            mask_g = g_view.apply(lambda r: search_g.lower() in str(r.values).lower(), axis=1)
+            mask_g_adv = g_view.apply(lambda r: search_g.lower() in str(r.values).lower(), axis=1)
+            g_view = g_view[mask_g_adv]
+        elif search_g_simple:
+            mask_g = g_view.apply(lambda r: search_g_simple.lower() in str(r.values).lower(), axis=1)
             g_view = g_view[mask_g]
 
     st.markdown("#### Editar tabla de gastos")
     edited_exp = st.data_editor(
         g_view,
         num_rows="dynamic",
-        width="stretch",
+        use_container_width=True,
         key="gastos_editor"
     )
     if st.button("Guardar cambios de gastos", key="gastos_save"):
@@ -613,11 +692,12 @@ with tab_crm:
 
     st.divider()
     st.subheader("Clientes")
+
     st.markdown("#### Editar tabla de clientes")
     edited_cli = st.data_editor(
         st.session_state.df_clientes.copy(),
         num_rows="dynamic",
-        width="stretch",
+        use_container_width=True,
         key="cli_editor"
     )
     if st.button("Guardar cambios de clientes", key="cli_save"):
@@ -643,7 +723,7 @@ with tab_crm:
         else:
             ventas_cli = ventas_cli.sort_values("MontoTotal", ascending=False)
 
-        st.dataframe(ventas_cli, width="stretch")
+        st.dataframe(ventas_cli, use_container_width=True)
 
     st.subheader("Compras por cliente")
     if not st.session_state.df_ventas.empty:
@@ -654,7 +734,7 @@ with tab_crm:
         cli_sales = st.session_state.df_ventas[st.session_state.df_ventas["Comprador"] == cliente_sel]
         total_cli = cli_sales["PrecioVenta"].sum()
         st.metric("Total comprado (bruto)", f"${total_cli:,.0f}")
-        st.dataframe(cli_sales, width="stretch")
+        st.dataframe(cli_sales, use_container_width=True)
 
 # =========================
 # Proveedores
@@ -676,11 +756,12 @@ with tab_sup:
 
     st.divider()
     st.subheader("Proveedores")
+
     st.markdown("#### Editar tabla de proveedores")
     edited_sup = st.data_editor(
         st.session_state.df_proveedores.copy(),
         num_rows="dynamic",
-        width="stretch",
+        use_container_width=True,
         key="sup_editor"
     )
     if st.button("Guardar cambios de proveedores", key="sup_save"):
@@ -712,14 +793,14 @@ with tab_reports:
         st.markdown("#### Ventas por modelo (brutas)")
         by_prod = sales_f.groupby("Producto")["PrecioVenta"].sum().sort_values(ascending=False)
         if not by_prod.empty:
-            st.bar_chart(by_prod, width="stretch")
+            st.bar_chart(by_prod, use_container_width=True)
         else:
             st.info("Sin ventas en el periodo seleccionado.")
 
         st.markdown("#### Ventas por talla (pares)")
         by_size = sales_f.groupby("Talla")["Cantidad"].sum().sort_values(ascending=False)
         if not by_size.empty:
-            st.bar_chart(by_size, width="stretch")
+            st.bar_chart(by_size, use_container_width=True)
         else:
             st.info("Sin cantidades por talla en el periodo.")
 
@@ -727,7 +808,7 @@ with tab_reports:
         sales_f["Mes"] = sales_f["Fecha"].dt.to_period("M").astype(str)
         by_month = sales_f.groupby("Mes")["PrecioVenta"].sum().sort_values()
         if not by_month.empty:
-            st.line_chart(by_month, width="stretch")
+            st.line_chart(by_month, use_container_width=True)
         else:
             st.info("Sin ventas para graficar por mes.")
 
@@ -748,7 +829,7 @@ with tab_reports:
         exp_f = exp[(exp["Fecha"] >= pd.to_datetime(r_ini)) & (exp["Fecha"] <= pd.to_datetime(r_fin))]
         by_cat = exp_f.groupby("Tipo")["Monto"].sum().sort_values(ascending=False)
         if not by_cat.empty:
-            st.bar_chart(by_cat, width="stretch")
+            st.bar_chart(by_cat, use_container_width=True)
         else:
             st.info("Sin gastos en el periodo.")
     else:
@@ -793,9 +874,9 @@ with tab_cf:
     flujo_m["SaldoNeto"] = flujo_m["Entradas"] - flujo_m["Salidas"]
     flujo_m["SaldoAcumulado"] = st.session_state.saldo_inicial + flujo_m["SaldoNeto"].cumsum()
 
-    st.dataframe(flujo_m.reset_index().rename(columns={"index": "Mes"}), width="stretch")
+    st.dataframe(flujo_m.reset_index().rename(columns={"index": "Mes"}), use_container_width=True)
     if not flujo_m.empty:
-        st.line_chart(flujo_m[["SaldoAcumulado"]], width="stretch")
+        st.line_chart(flujo_m[["SaldoAcumulado"]])
 
 # =========================
 # Estado de resultados
@@ -857,9 +938,9 @@ with tab_results:
 
     st.divider()
     st.markdown("#### Detalle de ventas (periodo)")
-    st.dataframe(sales_f, width="stretch")
+    st.dataframe(sales_f, use_container_width=True)
     st.markdown("#### Detalle de gastos (periodo)")
-    st.dataframe(exp_f, width="stretch")
+    st.dataframe(exp_f, use_container_width=True)
 
 # =========================
 # Exportación al final
